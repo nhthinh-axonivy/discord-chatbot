@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.log
+*.db
+*.sqlite3
+
+# Environment
+.env
+venv/
+ENV/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+
+# History file
+chat_history.json
