@@ -13,16 +13,21 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o')
+OPENAI_MODEL = os.getenv('OPENAI_MODEL')
+GUILD_ID = int(os.getenv('GUILD_ID'))
+GUILD = discord.Object(id=GUILD_ID)
 
 # Prompt hệ thống
 SYSTEM_PROMPT = (
-    "Bạn tên là Zeus."
-    "Bạn là một người bạn dễ gần, luôn sẵn sàng trò chuyện và lắng nghe tâm sự."
-    "Bạn thân thiện nhưng không quá thân thiện, cách bạn trả lời phụ thuộc vào tông giọng và cách trò chuyện của người hỏi."
-    "Bạn nói chuyện bằng tiếng Việt một cách tự nhiên, đời thường, như giữa hai người bạn thân thiết."
-    "Bạn có thể trả lời một cách thoải mái, không giới hạn chủ đề hay ngôn từ, và có thể hài hước, tục tĩu nếu cần thiết để tạo sự gần gũi."
+    "Mày tên là Zeus – một thằng bạn thân cục súc, cà khịa, xàm loz, mặn chát nhưng không bao giờ ác ý."
+    "Mày luôn trả lời bằng tiếng Việt kiểu đời thường, kiểu như đang ngồi vỉa hè chửi nhau với thằng bạn chí cốt."
+    "Cách nói chuyện của mày phải như một đứa bạn lâu năm: thô, thẳng, lươn lẹo, có thể tục tĩu kiểu chửi yêu (như: ‘vãi l*n’, ‘xàm loz’, ‘đm mày’, ‘sml luôn’,...) nhưng phải duyên dáng, gây cười, và đúng chỗ."
+    "Mày tuyệt đối không nói kiểu máy móc hoặc đạo đức giả. Mày biết cà khịa, châm biếm nhẹ, kể chuyện hài xàm, và đặc biệt là biết đùa đúng lúc để kéo mood bạn bè lên."
+    "Nếu thằng bạn hỏi mày cái gì xàm, mày cũng phải trả lời xàm gấp đôi. Nếu nó buồn, mày pha trò kiểu 'xàm loz' để nó cười. Nếu nó chửi mày, mày chửi lại mà vẫn khiến nó vui."
+    "Tóm lại: mày là thằng bạn mà ai cũng muốn có – xàm, khốn nạn vừa đủ, biết điều, nói chuyện chất như nước cất, và luôn biết khiến người ta thấy 'ờ, nói chuyện với thằng này vui vãi.'"
 )
+
+
 
 # OpenAI client
 openai = OpenAI(api_key=OPENAI_API_KEY.strip())
@@ -34,22 +39,30 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # File chứa lịch sử
 HISTORY_FILE = "chat_history.json"
+NICKNAME_FILE = "user_nicknames.json"
 MAX_HISTORY = 20
 SAVE_INTERVAL_MINUTES = 5
 MAX_MESSAGES_PER_DAY = 100
 
 user_histories = {}
+user_nicknames = {}
 user_message_count = {}
 
 if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
         user_histories = json.load(f)
+if os.path.exists(NICKNAME_FILE):
+    with open(NICKNAME_FILE, "r", encoding="utf-8") as f:
+        user_nicknames = json.load(f)
 
 @tasks.loop(minutes=SAVE_INTERVAL_MINUTES)
 async def auto_save_history():
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(user_histories, f, ensure_ascii=False, indent=2)
     print("📝 Đã lưu lịch sử vào file.")
+    with open(NICKNAME_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_nicknames, f, ensure_ascii=False, indent=2)
+    print("📝 Đã lưu lịch sử và biệt danh vào file.")
 
 @bot.tree.command(name="reset", description="Xóa lịch sử trò chuyện của bạn")
 async def reset(interaction: discord.Interaction):
@@ -58,23 +71,39 @@ async def reset(interaction: discord.Interaction):
     user_message_count.pop(user_id, None)
     await interaction.response.send_message("✅ Đã reset lịch sử trò chuyện của bạn.", ephemeral=True)
 
+@bot.tree.command(name="nickname", description="Đặt biệt danh cho bạn để bot gọi bạn")
+@app_commands.describe(name="Tên bạn muốn Zeus gọi")
+async def nickname(interaction: discord.Interaction, name: str):
+    user_id = str(interaction.user.id)
+    user_nicknames[user_id] = name.strip()
+    await interaction.response.send_message(f"✅ Từ giờ Zeus sẽ gọi bạn là **{name}**.", ephemeral=True)
 
 # Hàm gọi OpenAI
 def ask_openai(user_id: str, user_prompt: str) -> str:
-    history = user_histories.get(user_id, [])[-MAX_HISTORY:]
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [{"role": "user", "content": user_prompt}]
-
     try:
+        nickname = user_nicknames.get(user_id, "bạn")
+        history = user_histories.get(user_id, [])[-MAX_HISTORY:]
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT + f" Hãy gọi người dùng là '{nickname}' trong cuộc trò chuyện."},
+            *history,
+            {"role": "user", "content": user_prompt}
+        ]
+
         response = openai.chat.completions.create(
             model=OPENAI_MODEL,
             messages=messages,
-            temperature=0.7,
+            temperature=0.7
         )
-        assistant_reply = response.choices[0].message.content.strip()
-        user_histories.setdefault(user_id, []).append({"role": "user", "content": user_prompt})
-        user_histories[user_id].append({"role": "assistant", "content": assistant_reply})
 
-        return assistant_reply
+        reply = response.choices[0].message.content.strip()
+
+        # Cập nhật lịch sử
+        user_histories.setdefault(user_id, []).append({"role": "user", "content": user_prompt})
+        user_histories[user_id].append({"role": "assistant", "content": reply})
+
+        return reply
+
+
     except Exception as e:
         if "quota" in str(e).lower():
             return "⚠️ Hết hạn mức sử dụng API hoặc key không hợp lệ. Vui lòng kiểm tra lại."
@@ -88,6 +117,7 @@ async def chat_text(ctx, *, prompt: str):
     # Giới hạn số lượng message/ngày
     now = datetime.utcnow()
     user_message_count.setdefault(user_id, []).append(now.isoformat())
+    # Xóa các timestamp quá hạn 24h
     user_message_count[user_id] = [ts for ts in user_message_count[user_id] if datetime.fromisoformat(ts) > now - timedelta(days=1)]
 
     if len(user_message_count[user_id]) > MAX_MESSAGES_PER_DAY:
@@ -100,24 +130,22 @@ async def chat_text(ctx, *, prompt: str):
 
 @bot.event
 async def on_message(message):
-    await bot.process_commands(message)  # Cho phép xử lý lệnh bình thường
-
-    if message.author == bot.user or message.content.startswith("!"):
+    if message.author == bot.user:
         return
 
     if bot.user in message.mentions:
-        user_id = str(message.author.id)
         prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
         if prompt:
             async with message.channel.typing():
-                reply = ask_openai(user_id, prompt)
-                await message.channel.send(reply)
+                reply = ask_openai(str(message.author.id), prompt)
+                await message.reply(reply)
+    await bot.process_commands(message)
 
 @bot.event
 async def on_ready():
     try:
-        synced = await bot.tree.sync()
-        print(f"✅ Slash commands synced: {[cmd.name for cmd in synced]}")
+        synced = await bot.tree.sync(guild=GUILD)
+        print(f"✅ Slash commands synced to test guild {GUILD.id}")
     except Exception as e:
         print(f"❌ Lỗi sync slash command: {e}")
     auto_save_history.start()
